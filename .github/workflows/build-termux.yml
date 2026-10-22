@@ -1,4 +1,4 @@
-name: Build Termux package
+name: Build Termux ARM64 bundle
 
 on:
   push:
@@ -14,66 +14,105 @@ permissions:
   contents: read
 
 jobs:
-  package:
+  build-aarch64:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Enable ARM64 emulation
+        uses: docker/setup-qemu-action@v3
         with:
-          python-version: "3.12"
+          platforms: arm64
 
-      - name: Validate TUI syntax
-        run: python -m py_compile src/tui.py
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Build installable Termux command package
+      - name: Build inside Termux ARM64 container and bundle dependencies
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="$(grep -m1 '^__version__' src/tui.py | cut -d '"' -f2 || true)"
-          VERSION="${VERSION:-0.1.0}"
-          PKGROOT="$PWD/pkgroot"
-          mkdir -p "$PKGROOT/data/data/com.termux/files/usr/bin"
-          mkdir -p "$PKGROOT/data/data/com.termux/files/usr/lib/wayground-termux"
-          mkdir -p "$PKGROOT/DEBIAN"
+          mkdir -p dist/bundle/wheels
+          docker run --rm --platform linux/arm64 --security-opt seccomp=unconfined \
+            -v "$PWD:/work" -w /work termux/termux-docker:aarch64 \
+            bash -lc '
+              set -euo pipefail
+              pkg update
+              pkg install -y python rust clang make
+              python -m py_compile src/tui.py
+              python -m pip install --upgrade pip wheel
+              python -m pip wheel --wheel-dir dist/bundle/wheels -r requirements-termux.txt
+              cp src/tui.py dist/bundle/tui.py
+              cp requirements-termux.txt dist/bundle/requirements-termux.txt
+              python --version > dist/bundle/BUILT_WITH_PYTHON.txt
+              uname -m > dist/bundle/BUILT_FOR.txt
+            '
 
-          install -m 0644 src/tui.py "$PKGROOT/data/data/com.termux/files/usr/lib/wayground-termux/tui.py"
-          install -m 0644 requirements-termux.txt "$PKGROOT/data/data/com.termux/files/usr/lib/wayground-termux/requirements.txt"
-
-          cat > "$PKGROOT/data/data/com.termux/files/usr/bin/wayground-tui" <<'LAUNCHER'
+          cat > dist/bundle/wayground-tui <<'LAUNCHER'
           #!/data/data/com.termux/files/usr/bin/bash
-          set -e
-          APP_DIR="/data/data/com.termux/files/usr/lib/wayground-termux"
-          PYTHON="/data/data/com.termux/files/usr/bin/python"
-          if ! "$PYTHON" -c 'import textual, openai' >/dev/null 2>&1; then
-            echo "Installing required Python libraries (Textual and OpenAI SDK)..."
-            "$PYTHON" -m pip install --upgrade -r "$APP_DIR/requirements.txt"
+          set -euo pipefail
+          APP_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
+          PYTHON="$PREFIX/bin/python"
+          if [ ! -x "$PYTHON" ]; then
+            echo "Termux Python is required. Install it with: pkg install python" >&2
+            exit 1
           fi
           exec "$PYTHON" "$APP_DIR/tui.py" "$@"
           LAUNCHER
-          chmod 0755 "$PKGROOT/data/data/com.termux/files/usr/bin/wayground-tui"
+          chmod 0755 dist/bundle/wayground-tui
 
-          cat > "$PKGROOT/DEBIAN/control" <<CONTROL
-          Package: wayground-termux
-          Version: $VERSION
-          Section: misc
-          Priority: optional
-          Architecture: all
-          Maintainer: FarizGD
-          Description: Textual study assistant TUI for Termux
-           Keyboard-driven study assistant and environment diagnostics.
-          CONTROL
+          cat > dist/bundle/install.sh <<'INSTALLER'
+          #!/data/data/com.termux/files/usr/bin/bash
+          set -euo pipefail
+          APP_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
+          : "${PREFIX:?Run this installer inside Termux}"
+          PYTHON="$PREFIX/bin/python"
+          if [ ! -x "$PYTHON" ]; then
+            echo "Installing Termux Python..."
+            pkg install -y python
+          fi
+          echo "Installing bundled Python packages offline..."
+          "$PYTHON" -m pip install --no-index --find-links "$APP_DIR/wheels" -r "$APP_DIR/requirements-termux.txt"
+          mkdir -p "$PREFIX/opt/wayground-termux" "$PREFIX/bin"
+          cp "$APP_DIR/tui.py" "$PREFIX/opt/wayground-termux/tui.py"
+          cp "$APP_DIR/requirements-termux.txt" "$PREFIX/opt/wayground-termux/requirements-termux.txt"
+          cp -a "$APP_DIR/wheels" "$PREFIX/opt/wayground-termux/"
+          cat > "$PREFIX/bin/wayground-tui" <<'RUNNER'
+          #!/data/data/com.termux/files/usr/bin/bash
+          set -euo pipefail
+          exec "$PREFIX/bin/python" "$PREFIX/opt/wayground-termux/tui.py" "$@"
+          RUNNER
+          chmod 0755 "$PREFIX/bin/wayground-tui"
+          echo "Installed. Run: wayground-tui"
+          INSTALLER
+          chmod 0755 dist/bundle/install.sh
 
-          dpkg-deb --build --root-owner-group "$PKGROOT" wayground-termux.deb
-          mkdir -p dist
-          mv wayground-termux.deb dist/
+          cat > dist/bundle/README.txt <<'README'
+          Wayground Termux ARM64 bundle
 
-      - name: Upload package artifact
+          Requirements:
+            - Android running Termux for aarch64
+            - Termux Python installed by the installer if missing
+
+          Install:
+            1. Extract this archive in Termux-accessible storage.
+            2. Run: bash install.sh
+            3. Run: wayground-tui
+
+          Python dependencies are bundled as wheels and installed offline.
+          This bundle is built for the Python version shown in BUILT_WITH_PYTHON.txt.
+          It is not a standalone native ELF binary and still requires Termux's Python runtime.
+          README
+
+          tar -czf dist/wayground-termux-aarch64.tar.gz -C dist bundle
+          sha256sum dist/wayground-termux-aarch64.tar.gz > dist/wayground-termux-aarch64.tar.gz.sha256
+
+      - name: Upload ARM64 bundle
         uses: actions/upload-artifact@v4
         with:
-          name: wayground-termux-package
-          path: dist/wayground-termux.deb
+          name: wayground-termux-aarch64
+          path: |
+            dist/wayground-termux-aarch64.tar.gz
+            dist/wayground-termux-aarch64.tar.gz.sha256
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
