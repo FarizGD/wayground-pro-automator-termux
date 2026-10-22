@@ -28,18 +28,24 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build inside Termux ARM64 container and bundle dependencies
+      - name: Prepare bundle directory
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist/bundle/wheels
+          chmod -R a+rwx dist
+
+      - name: Build inside Termux ARM64 container and bundle dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
           docker run --rm --privileged --platform linux/arm64 --security-opt seccomp=unconfined \
             -v "$PWD:/work" -w /work termux/termux-docker:aarch64 \
             bash -lc '
               set -euo pipefail
               pkg update
               pkg install -y python rust clang make
-              python -m py_compile src/tui.py
+              python -c "from pathlib import Path; p=Path(\"src/tui.py\"); compile(p.read_text(), str(p), \"exec\")"
               python -m pip install wheel
               python -m pip wheel --wheel-dir dist/bundle/wheels -r requirements-termux.txt
               cp src/tui.py dist/bundle/tui.py
