@@ -27,6 +27,33 @@
 
 ## 🇬🇧 English
 
+## Termux TUI (Textual)
+
+A lightweight, keyboard-driven terminal interface is available for Android/Termux. It uses Textual and the OpenAI-compatible SDK, without requiring PySide6 or Playwright just to launch the study interface.
+
+### Install on Termux
+
+```bash
+pkg update
+pkg install -y git python
+git clone https://github.com/FarizGD/wayground-pro-automator-termux.git
+cd wayground-pro-automator-termux
+bash install-termux.sh
+python src/tui.py
+```
+
+If you already cloned the repository, update it with `git pull` before running the install script.
+
+### TUI features
+
+- Keyboard-friendly dashboard, study assistant, AI configuration, and environment diagnostics.
+- Save provider key, OpenAI-compatible base URL, and model to a local `.env` file. The key field is masked.
+- Use Textual's navigation and terminal controls; press Escape to return and Ctrl+C to quit.
+- The TUI does not require desktop dependencies and does not automate submitting answers to live assessments.
+
+The study assistant sends the text you enter to the configured AI provider. Do not enter passwords, personal data, or other sensitive information. API usage may incur provider charges. Keep `.env` private.
+
+
 ### Table of Contents
 
 - [What's New in v4.0](#whats-new-in-v40)
