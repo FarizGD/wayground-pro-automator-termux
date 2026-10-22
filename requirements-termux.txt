@@ -1,0 +1,4 @@
+# Minimal dependencies for the Termux Textual TUI.
+# Install with: python -m pip install -r requirements-termux.txt
+textual>=0.70,<2
+openai>=1.30,<3
