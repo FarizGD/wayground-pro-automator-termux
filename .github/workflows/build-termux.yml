@@ -43,6 +43,8 @@ jobs:
             -v "$PWD:/work" -w /work termux/termux-docker:aarch64 \
             bash -lc '
               set -euo pipefail
+              # Pin the repo to a stable mirror instead of the container random mirror selection.
+              printf "deb https://packages-cf.termux.dev/apt/termux-main stable main\n" > "$PREFIX/etc/apt/sources.list"
               pkg update
               pkg install -y python rust clang make
               python -c "from pathlib import Path; p=Path(\"src/tui.py\"); compile(p.read_text(), str(p), \"exec\")"
