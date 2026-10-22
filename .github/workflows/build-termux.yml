@@ -1,0 +1,79 @@
+name: Build Termux package
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/tui.py"
+      - "requirements-termux.txt"
+      - "packaging/termux/**"
+      - ".github/workflows/build-termux.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate TUI syntax
+        run: python -m py_compile src/tui.py
+
+      - name: Build installable Termux command package
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(grep -m1 '^__version__' src/tui.py | cut -d '"' -f2 || true)"
+          VERSION="${VERSION:-0.1.0}"
+          PKGROOT="$PWD/pkgroot"
+          mkdir -p "$PKGROOT/data/data/com.termux/files/usr/bin"
+          mkdir -p "$PKGROOT/data/data/com.termux/files/usr/lib/wayground-termux"
+          mkdir -p "$PKGROOT/DEBIAN"
+
+          install -m 0644 src/tui.py "$PKGROOT/data/data/com.termux/files/usr/lib/wayground-termux/tui.py"
+          install -m 0644 requirements-termux.txt "$PKGROOT/data/data/com.termux/files/usr/lib/wayground-termux/requirements.txt"
+
+          cat > "$PKGROOT/data/data/com.termux/files/usr/bin/wayground-tui" <<'LAUNCHER'
+          #!/data/data/com.termux/files/usr/bin/bash
+          set -e
+          APP_DIR="/data/data/com.termux/files/usr/lib/wayground-termux"
+          PYTHON="/data/data/com.termux/files/usr/bin/python"
+          if ! "$PYTHON" -c 'import textual, openai' >/dev/null 2>&1; then
+            echo "Installing required Python libraries (Textual and OpenAI SDK)..."
+            "$PYTHON" -m pip install --upgrade -r "$APP_DIR/requirements.txt"
+          fi
+          exec "$PYTHON" "$APP_DIR/tui.py" "$@"
+          LAUNCHER
+          chmod 0755 "$PKGROOT/data/data/com.termux/files/usr/bin/wayground-tui"
+
+          cat > "$PKGROOT/DEBIAN/control" <<CONTROL
+          Package: wayground-termux
+          Version: $VERSION
+          Section: misc
+          Priority: optional
+          Architecture: all
+          Maintainer: FarizGD
+          Description: Textual study assistant TUI for Termux
+           Keyboard-driven study assistant and environment diagnostics.
+          CONTROL
+
+          dpkg-deb --build --root-owner-group "$PKGROOT" wayground-termux.deb
+          mkdir -p dist
+          mv wayground-termux.deb dist/
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wayground-termux-package
+          path: dist/wayground-termux.deb
+          if-no-files-found: error
+          retention-days: 14
